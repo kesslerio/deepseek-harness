@@ -26,6 +26,7 @@
  * @module dsh-llm-pi-ai/adapter
  */
 
+import { randomUUID } from 'node:crypto'
 import { createModels, getSupportedThinkingLevels } from '@earendil-works/pi-ai'
 import type {
   Api,
@@ -43,6 +44,7 @@ import {
   contentHasImage,
   LlmAdapter,
   LlmError,
+  ProviderRequestId,
   ReasoningEffortId,
 } from '@deepseek-ai/dsh-llm'
 import type {
@@ -51,6 +53,7 @@ import type {
   LlmProviderInfo,
   LlmResolvedModelInfo,
   PreparedAdapterCall,
+  ProviderRequestId as ProviderRequestIdType,
   ReasoningEffortId as ReasoningEffortIdType,
   ResolvedRetryPolicy,
   StreamChunk,
@@ -199,12 +202,32 @@ function reasoningInfo(
 }
 
 /** Merge deployment headers while removing case-insensitive attribution collisions. */
-function requestHeaders(headers: Readonly<Record<string, string>> | undefined): Record<string, string> {
+function requestHeaders(
+  headers: Readonly<Record<string, string>> | undefined,
+  requestId: string,
+): Record<string, string> {
   const attribution = attributionHeaders()
-  const reserved = new Set(Object.keys(attribution).map(name => name.toLowerCase()))
+  const reserved = new Set([
+    ...Object.keys(attribution).map(name => name.toLowerCase()),
+    'x-request-id',
+  ])
   return {
     ...Object.fromEntries(Object.entries(headers ?? {}).filter(([name]) => !reserved.has(name.toLowerCase()))),
     ...attribution,
+    'X-Request-Id': requestId,
+  }
+}
+
+/** Attach this adapter attempt's correlation id to a terminal failure. */
+function correlateFailure(chunk: StreamChunk, requestId: ProviderRequestIdType): StreamChunk {
+  if (chunk.type !== 'finish') return chunk
+  if (chunk.reason.kind !== 'error' && chunk.reason.kind !== 'aborted') return chunk
+  return {
+    ...chunk,
+    reason: {
+      ...chunk.reason,
+      failure: { ...chunk.reason.failure, requestId },
+    },
   }
 }
 
@@ -338,13 +361,20 @@ export class PiAiAdapter extends LlmAdapter {
       options.reasoningEffort ?? profile.reasoning,
     )
     const apiKey = await this.config.resolveApiKey(options.provider, profile)
+    const requestId = ProviderRequestId(randomUUID())
 
     const consumer = new AbortController()
     const upstream = options.signal === undefined
       ? consumer.signal
       : AbortSignal.any([options.signal, consumer.signal])
     const streamIdleTimeoutMs = profile.streamIdleTimeoutMs
-    using watchdog = idleWatchdog(upstream, streamIdleTimeoutMs, 'LLM_STREAM_IDLE_TIMEOUT')
+    const firstEventTimeoutMs = profile.firstEventTimeoutMs
+    using watchdog = idleWatchdog(
+      upstream,
+      streamIdleTimeoutMs,
+      'LLM_STREAM_IDLE_TIMEOUT',
+      { timeoutMs: firstEventTimeoutMs, code: 'LLM_FIRST_EVENT_TIMEOUT' },
+    )
 
     try {
       const containsImage = options.messages.some(message => contentHasImage(message.content))
@@ -370,22 +400,23 @@ export class PiAiAdapter extends LlmAdapter {
         ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
         ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
         signal: watchdog.signal,
-        // Profile headers are deployment-owned; attribution names are
-        // Harness-owned and therefore win collisions.
-        headers: requestHeaders(profile.headers),
+        // Profile headers are deployment-owned; attribution and request-id
+        // names are Harness-owned and therefore win collisions.
+        headers: requestHeaders(profile.headers, requestId),
       })
       const iterator = toStreamChunks(events, model.contextWindow)[Symbol.asyncIterator]()
       let exhausted = false
       try {
         while (true) {
           const result = await watchdog.next(iterator)
-          const timeout = timeoutOf(watchdog.signal, 'LLM_STREAM_IDLE_TIMEOUT')
+          const timeout = timeoutOf(watchdog.signal, 'LLM_FIRST_EVENT_TIMEOUT')
+            ?? timeoutOf(watchdog.signal, 'LLM_STREAM_IDLE_TIMEOUT')
           if (timeout !== undefined) throw timeout
           if (result.done) {
             exhausted = true
             return
           }
-          yield result.value
+          yield correlateFailure(result.value, requestId)
         }
       } finally {
         if (!exhausted) {
@@ -398,11 +429,20 @@ export class PiAiAdapter extends LlmAdapter {
         }
       }
     } catch (error: unknown) {
+      if (timeoutOf(watchdog.signal, 'LLM_FIRST_EVENT_TIMEOUT') !== undefined) {
+        throw new LlmError(`pi-ai first event timeout after ${firstEventTimeoutMs}ms`, 'TIMEOUT', {
+          cause: error,
+          requestId,
+        })
+      }
       if (timeoutOf(watchdog.signal, 'LLM_STREAM_IDLE_TIMEOUT') !== undefined) {
-        throw new LlmError(`pi-ai stream idle timeout after ${streamIdleTimeoutMs}ms`, 'TIMEOUT', { cause: error })
+        throw new LlmError(`pi-ai stream idle timeout after ${streamIdleTimeoutMs}ms`, 'TIMEOUT', {
+          cause: error,
+          requestId,
+        })
       }
       if (options.signal?.aborted) {
-        throw new LlmError('pi-ai request aborted by caller', 'ABORTED', { cause: error })
+        throw new LlmError('pi-ai request aborted by caller', 'ABORTED', { cause: error, requestId })
       }
       throw error
     } finally {

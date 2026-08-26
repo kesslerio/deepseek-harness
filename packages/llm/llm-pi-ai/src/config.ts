@@ -158,6 +158,8 @@ export interface PiAiProviderProfile {
   timeoutMs?: number
   /** WebSocket connection timeout in milliseconds. */
   websocketConnectTimeoutMs?: number
+  /** Maximum wait for the first Harness stream chunk; defaults to {@link streamIdleTimeoutMs}. */
+  firstEventTimeoutMs?: number
   /** Maximum provider idle time while one stream read is outstanding. */
   streamIdleTimeoutMs?: number
   /**
@@ -186,6 +188,8 @@ export interface ResolvedPiAiProviderProfile
   apiKeyEnv?: CredentialRef
   /** Positive finite provider-idle interval after defaulting. */
   streamIdleTimeoutMs: number
+  /** Positive finite first-event interval after defaulting. */
+  firstEventTimeoutMs: number
   /** Positive request-level base64 image payload bound after defaulting. */
   maxRequestImageBytes: number
   /** Positive total-pixel request-version budget after defaulting. */
@@ -322,6 +326,7 @@ const profile = z.object({
   transport: z.union(['sse', 'websocket', 'websocket-cached', 'auto']),
   timeoutMs: z.natural(),
   websocketConnectTimeoutMs: z.natural(),
+  firstEventTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS),
   streamIdleTimeoutMs: z.number().min(Number.MIN_VALUE).max(MAX_TIMER_DELAY_MS).default(DEFAULT_STREAM_IDLE_TIMEOUT_MS),
   maxRequestImageBytes: z.number().step(1).min(1).default(DEFAULT_MAX_REQUEST_IMAGE_BYTES),
   requestImagePixelBudget: z.number().step(1).min(1).default(DEFAULT_REQUEST_IMAGE_PIXEL_BUDGET),
@@ -401,6 +406,14 @@ export function resolveProfiles(
         `llm-pi-ai: provider "${provider}" streamIdleTimeoutMs must be a positive finite number no greater than ${MAX_TIMER_DELAY_MS}`,
       )
     }
+    const firstEventTimeoutMs = source.firstEventTimeoutMs ?? streamIdleTimeoutMs
+    if (!Number.isFinite(firstEventTimeoutMs)
+      || firstEventTimeoutMs <= 0
+      || firstEventTimeoutMs > MAX_TIMER_DELAY_MS) {
+      throw new Error(
+        `llm-pi-ai: provider "${provider}" firstEventTimeoutMs must be a positive finite number no greater than ${MAX_TIMER_DELAY_MS}`,
+      )
+    }
     const maxRequestImageBytes = source.maxRequestImageBytes ?? DEFAULT_MAX_REQUEST_IMAGE_BYTES
     if (!Number.isInteger(maxRequestImageBytes) || maxRequestImageBytes <= 0) {
       throw new Error(`llm-pi-ai: provider "${provider}" maxRequestImageBytes must be a positive integer`)
@@ -443,6 +456,7 @@ export function resolveProfiles(
       provider,
       displayName,
       ...apiKeyEnv === undefined ? {} : { apiKeyEnv: credentialRef(apiKeyEnv) },
+      firstEventTimeoutMs,
       streamIdleTimeoutMs,
       maxRequestImageBytes,
       requestImagePixelBudget,

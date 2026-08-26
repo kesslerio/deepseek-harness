@@ -111,6 +111,20 @@ describe('PiAiAdapter provider routing', () => {
     expect(server.headers[0]?.['user-agent']).toBe(userAgent())
   })
 
+  it('assigns a distinct request id to every provider attempt', async () => {
+    const server = await mockServer([{ events: textEvents }, { events: textEvents }])
+    const ctx = await harness(server.url, { headers: { 'X-Request-Id': 'configured-value' } })
+
+    await assemble(ctx, { model: 'deepseek-v4-flash', messages: [] })
+    await assemble(ctx, { model: 'deepseek-v4-flash', messages: [] })
+
+    const ids = server.headers.map(headers => headers['x-request-id'])
+    expect(ids).toHaveLength(2)
+    expect(ids[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(ids[1]).not.toBe(ids[0])
+    expect(ids).not.toContain('configured-value')
+  })
+
   it('forwards common stream options and profile reasoning', async () => {
     const server = await mockServer([{ events: textEvents }])
     const ctx = await harness(server.url, {
@@ -383,13 +397,15 @@ describe('PiAiAdapter provider routing', () => {
 
     const result = await assemble(ctx, { model: model.id, messages: [] })
 
-    expect(result.finish).toEqual({
+    expect(result.finish).toMatchObject({
       kind: 'error',
       failure: {
         message: `pi-ai detected context overflow for model "${model.id}"`,
         code: CONTEXT_WINDOW_EXCEEDED_CODE,
       },
     })
+    if (result.finish.kind !== 'error') throw new Error('expected context overflow failure')
+    expect(result.finish.failure.requestId).toMatch(/^[0-9a-f-]{36}$/)
   })
 
   it('stops the SDK request when the adapter idle watchdog expires', async () => {
@@ -406,6 +422,46 @@ describe('PiAiAdapter provider routing', () => {
     ])
 
     expect(server.paths).toEqual(['/chat/completions'])
+    expect(server.closedResponses).toBe(1)
+  })
+
+  it('uses the longer first-event bound before enforcing stream idle', async () => {
+    const server = await mockServer([{ events: textEvents, initialDelayMs: 60 }])
+    const ctx = await harness(server.url, {
+      firstEventTimeoutMs: 200,
+      streamIdleTimeoutMs: 20,
+    })
+
+    const result = await assemble(ctx, { model: 'deepseek-v4-flash', messages: [] })
+
+    expect(result.finish).toEqual({ kind: 'stop' })
+    expect(server.paths).toEqual(['/chat/completions'])
+  })
+
+  it('reports first-event expiry with the attempt request id', async () => {
+    const server = await mockServer([{ events: textEvents, initialDelayMs: 200 }])
+    const ctx = await harness(server.url, {
+      firstEventTimeoutMs: 20,
+      streamIdleTimeoutMs: 100,
+    })
+
+    const result = await assemble(ctx, { model: 'deepseek-v4-flash', messages: [] })
+    const requestId = server.headers[0]?.['x-request-id']
+
+    expect(result.finish).toMatchObject({
+      kind: 'error',
+      failure: {
+        code: 'TIMEOUT',
+        message: 'pi-ai first event timeout after 20ms',
+        requestId,
+      },
+    })
+    await Promise.race([
+      server.responseClosed,
+      new Promise<never>((_resolve, reject) => {
+        setTimeout(() => { reject(new Error('SDK request did not close after first-event timeout')) }, 1_000)
+      }),
+    ])
     expect(server.closedResponses).toBe(1)
   })
 })
@@ -831,6 +887,9 @@ describe('provider profile lifecycle', () => {
     const invalid = [
       { timeoutMs: -1 },
       { websocketConnectTimeoutMs: -1 },
+      { firstEventTimeoutMs: 0 },
+      { firstEventTimeoutMs: Number.NaN },
+      { firstEventTimeoutMs: MAX_TIMER_DELAY_MS + 1 },
       { streamIdleTimeoutMs: 0 },
       { streamIdleTimeoutMs: Number.NaN },
       { streamIdleTimeoutMs: MAX_TIMER_DELAY_MS + 1 },
@@ -913,6 +972,15 @@ describe('provider profile lifecycle', () => {
   })
 
   it('validates profiles at the shared resolver boundary', () => {
+    expect(resolveProfiles({
+      openai: { streamIdleTimeoutMs: 12_345 },
+    }).get('openai')).toMatchObject({ firstEventTimeoutMs: 12_345 })
+    expect(resolveProfiles({
+      openai: { firstEventTimeoutMs: 54_321, streamIdleTimeoutMs: 12_345 },
+    }).get('openai')).toMatchObject({ firstEventTimeoutMs: 54_321 })
+    expect(() => resolveProfiles({
+      openai: { firstEventTimeoutMs: 0 },
+    })).toThrow(/firstEventTimeoutMs.*positive finite/)
     expect(() => resolveProfiles({
       openai: { streamIdleTimeoutMs: 0 },
     })).toThrow(/streamIdleTimeoutMs.*positive finite/)

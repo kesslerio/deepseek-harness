@@ -115,20 +115,27 @@ export function deadline(
 /**
  * Create a rearmable idle watchdog for an async iterator. The timer exists only
  * while {@link IdleWatchdog.next} is outstanding, so consumer think time does
- * not count as provider idle time. The returned signal is stable for the whole
- * call and only notifies; the iterator must observe it to terminate its work.
+ * not count as provider idle time. The first guarded demand may use a distinct
+ * interval and reason; later demands use the idle values. The returned signal
+ * is stable for the whole call and only notifies; the iterator must observe it
+ * to terminate its work.
  *
  * @param upstream - caller cancellation fused into the stable signal.
  * @param timeoutMs - positive finite idle interval in milliseconds.
  * @param code - capability-owned code carried by the timeout reason.
+ * @param first - optional positive finite interval and capability-owned code for the first guarded demand.
  * @returns a stable signal, guarded next operation, and timer disposer.
  */
 export function idleWatchdog(
   upstream: AbortSignal | undefined,
   timeoutMs: number,
   code: string,
+  first?: Readonly<{ timeoutMs: number; code: string }>,
 ): IdleWatchdog {
   assertTimerDelay(timeoutMs, 'idleWatchdog timeoutMs')
+  const firstTimeoutMs = first?.timeoutMs ?? timeoutMs
+  const firstCode = first?.code ?? code
+  assertTimerDelay(firstTimeoutMs, 'idleWatchdog firstTimeoutMs')
   const timeout = new AbortController()
   const signal = upstream === undefined
     ? timeout.signal
@@ -136,12 +143,15 @@ export function idleWatchdog(
   let timer: ReturnType<typeof setTimeout> | undefined
   let outstanding = false
   let disposed = false
+  let awaitingFirstProgress = true
 
   const arm = (): void => {
     if (timer !== undefined) clearTimeout(timer)
+    const activeTimeoutMs = awaitingFirstProgress ? firstTimeoutMs : timeoutMs
+    const activeCode = awaitingFirstProgress ? firstCode : code
     timer = setTimeout(() => {
-      timeout.abort(new TimeoutReason(code, timeoutMs))
-    }, timeoutMs)
+      timeout.abort(new TimeoutReason(activeCode, activeTimeoutMs))
+    }, activeTimeoutMs)
   }
 
   return {
@@ -152,7 +162,9 @@ export function idleWatchdog(
       outstanding = true
       arm()
       try {
-        return await iterator.next()
+        const result = await iterator.next()
+        awaitingFirstProgress = false
+        return result
       } finally {
         clearTimeout(timer)
         timer = undefined

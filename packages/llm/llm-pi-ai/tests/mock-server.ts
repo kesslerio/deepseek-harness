@@ -30,6 +30,7 @@ export async function mockServer(script: {
   status?: number
   events?: string[]
   body?: string
+  initialDelayMs?: number
   delayMs?: number
   headers?: Record<string, string>
 }[]): Promise<MockServer> {
@@ -64,7 +65,8 @@ export async function mockServer(script: {
         if (behavior.delayMs === undefined) writeNext()
         else setTimeout(writeNext, behavior.delayMs)
       }
-      writeNext()
+      if (behavior.initialDelayMs === undefined) writeNext()
+      else setTimeout(writeNext, behavior.initialDelayMs)
     })
   })
   servers.push(server)

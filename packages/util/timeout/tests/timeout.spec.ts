@@ -229,6 +229,54 @@ describe('idleWatchdog', () => {
     await expect(secondNext).rejects.toBe(stableSignal.reason)
   })
 
+  it('uses a distinct first-progress bound before switching to the idle bound', async () => {
+    vi.useFakeTimers()
+    const first = Promise.withResolvers<IteratorResult<number>>()
+    const second = Promise.withResolvers<IteratorResult<number>>()
+    const iterator: AsyncIterator<number> = {
+      next: vi.fn()
+        .mockImplementationOnce(() => first.promise)
+        .mockImplementationOnce(() => second.promise),
+    }
+    using watchdog = idleWatchdog(
+      undefined,
+      100,
+      'IDLE_TIMEOUT',
+      { timeoutMs: 300, code: 'FIRST_PROGRESS_TIMEOUT' },
+    )
+
+    const firstNext = watchdog.next(iterator)
+    await vi.advanceTimersByTimeAsync(299)
+    expect(watchdog.signal.aborted).toBe(false)
+    first.resolve({ done: false, value: 1 })
+    await expect(firstNext).resolves.toEqual({ done: false, value: 1 })
+
+    const secondNext = watchdog.next(iterator)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(timeoutOf(watchdog.signal, 'IDLE_TIMEOUT')).toMatchObject({ timeoutMs: 100 })
+    expect(timeoutOf(watchdog.signal, 'FIRST_PROGRESS_TIMEOUT')).toBeUndefined()
+    second.reject(watchdog.signal.reason)
+    await expect(secondNext).rejects.toBe(watchdog.signal.reason)
+  })
+
+  it('classifies expiry before first progress separately', async () => {
+    vi.useFakeTimers()
+    const pending = Promise.withResolvers<IteratorResult<number>>()
+    using watchdog = idleWatchdog(
+      undefined,
+      100,
+      'IDLE_TIMEOUT',
+      { timeoutMs: 300, code: 'FIRST_PROGRESS_TIMEOUT' },
+    )
+
+    const next = watchdog.next({ next: () => pending.promise })
+    await vi.advanceTimersByTimeAsync(300)
+    expect(timeoutOf(watchdog.signal, 'FIRST_PROGRESS_TIMEOUT')).toMatchObject({ timeoutMs: 300 })
+    expect(timeoutOf(watchdog.signal, 'IDLE_TIMEOUT')).toBeUndefined()
+    pending.reject(watchdog.signal.reason)
+    await expect(next).rejects.toBe(watchdog.signal.reason)
+  })
+
   it('rearms outstanding demand on an out-of-band activity pulse', async () => {
     vi.useFakeTimers()
     const pending = Promise.withResolvers<IteratorResult<number>>()
