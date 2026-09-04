@@ -6165,6 +6165,9 @@ importers:
       '@earendil-works/pi-ai':
         specifier: ^0.84.2
         version: 0.84.2(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      undici:
+        specifier: ^7.28.0
+        version: 7.28.0
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: workspace:^

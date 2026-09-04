@@ -9,6 +9,8 @@
  */
 
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -20,6 +22,7 @@ import LlmRuntime, { createMessage, createUserMessage, userAgent } from '@deepse
 import LocalCredentialProvider from '@deepseek-ai/dsh-credentials-local'
 import FileSettingsProvider from '@deepseek-ai/dsh-settings-file'
 import * as LlmPiAi from '@deepseek-ai/dsh-llm-pi-ai'
+import { installedHttpEgressFacts } from '../src/egress.ts'
 import { assemble } from './assemble.ts'
 import { closeMockServers, mockServer, textEvents } from './mock-server.ts'
 
@@ -34,6 +37,8 @@ const truncatedToolCallEvents = [
 
 let root: string | undefined
 let context: Context | undefined
+/** Raw stalling endpoints the egress integration test opens; closed in afterEach. */
+const rawServers: Server[] = []
 
 afterEach(async () => {
   await context?.fiber.dispose()
@@ -41,6 +46,10 @@ afterEach(async () => {
   if (root !== undefined) await rm(root, { recursive: true, force: true })
   root = undefined
   await closeMockServers()
+  for (const server of rawServers.splice(0)) {
+    server.closeAllConnections()
+    await new Promise<void>((resolve) => { server.close(() => { resolve() }) })
+  }
   vi.unstubAllEnvs()
 })
 
@@ -97,6 +106,51 @@ async function loadComposition(): Promise<{ ctx: Context; settingsPath: string }
 }
 
 describe('llm-pi-ai real dormant composition', () => {
+  it('installs the process-wide egress guards at mount', async () => {
+    vi.stubEnv('PI_COMPOSITION_KEY', '')
+    await loadComposition()
+    // The disabled default: the guards exist precisely so undici's 300,000 ms
+    // headers/body defaults stop bounding provider exchanges.
+    expect(installedHttpEgressFacts()).toEqual({ httpBodyTimeoutMs: 0, httpHeadersTimeoutMs: 0 })
+  })
+
+  it('routes provider requests through the installed egress guards', async () => {
+    vi.stubEnv('PI_COMPOSITION_KEY', '')
+    // A stalling endpoint: headers immediately, then no body bytes — the exact
+    // response shape whose silent prefill undici's built-in defaults kill.
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/event-stream' })
+      response.write(': headers only\n\n')
+    })
+    rawServers.push(server)
+    await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`
+    const { ctx, settingsPath } = await loadComposition()
+
+    // The settings seam carries the finite body guard alongside the route.
+    await writeFile(settingsPath, [
+      'llm-pi-ai:',
+      '  httpBodyTimeoutMs: 100',
+      '  providers:',
+      '    deepseek:',
+      '      apiKeyEnv: PI_COMPOSITION_KEY',
+      `      baseURL: ${url}`,
+      '',
+    ].join('\n'))
+    await vi.waitFor(() => {
+      expect(ctx.llm.listProviders().map(provider => provider.id)).toEqual(['deepseek'])
+      // The settings change reinstalled the dispatcher with the new facts.
+      expect(installedHttpEgressFacts()).toEqual({ httpBodyTimeoutMs: 100, httpHeadersTimeoutMs: 0 })
+    }, { timeout: 5000 })
+
+    const started = Date.now()
+    const result = await assemble(ctx, { provider: 'deepseek', model: 'deepseek-v4-flash', messages: [] })
+    // The configured 100 ms body guard fired through the pi-ai client; undici's
+    // 300,000 ms default would have held the exchange far past this bound.
+    expect(Date.now() - started).toBeLessThan(10_000)
+    expect(result.finish).toMatchObject({ kind: 'error', failure: { code: 'TRANSPORT' } })
+  })
+
   it('boots with zero routes and registers one the moment settings supply a profile', async () => {
     vi.stubEnv('PI_COMPOSITION_KEY', '')
     const server = await mockServer([{ events: textEvents }])

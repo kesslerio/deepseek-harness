@@ -67,6 +67,7 @@ import { authContextFrom, credentialStoreFrom } from './auth.ts'
 import { catalogProviderIds } from './catalog.ts'
 import { assertServiceable, Config, resolveProfiles } from './config.ts'
 import type { ResolvedPiAiProviderProfile } from './config.ts'
+import { applyHttpEgressGuards } from './egress.ts'
 import { discoverModels } from './discovery.ts'
 import type { StoredModelDiscoveryProfile } from './discovery.ts'
 import { registerPiAiFlows } from './login.ts'
@@ -165,6 +166,16 @@ export function apply(ctx: Context, config: Config): void {
     return next
   }
   profiles()
+
+  // The egress guards install with the plugin, before any route can serve a
+  // request: the first provider request must already run under the configured
+  // dispatcher (src/egress.ts owns the why). A settings change re-resolves
+  // them through the onChange below.
+  if (applyHttpEgressGuards(config)) {
+    ctx.logger.info(
+      `llm-pi-ai: installed process-wide fetch guards (httpBodyTimeoutMs=${config.httpBodyTimeoutMs ?? 0}, httpHeadersTimeoutMs=${config.httpHeadersTimeoutMs ?? 0})`,
+    )
+  }
 
   const resolveApiKey = async (
     provider: string,
@@ -303,6 +314,21 @@ export function apply(ctx: Context, config: Config): void {
         current = source
       },
       onChange: () => {
+        // The egress guards follow the section like every other knob: a changed
+        // timeout reinstalls the process-wide dispatcher, unchanged facts
+        // reinstall nothing. Contained like the swaps below — the previously
+        // installed dispatcher keeps serving when the install is refused.
+        try {
+          const section = current()
+          if (applyHttpEgressGuards(section)) {
+            ctx.logger.info(
+              `llm-pi-ai: reinstalled process-wide fetch guards (httpBodyTimeoutMs=${section.httpBodyTimeoutMs ?? 0}, httpHeadersTimeoutMs=${section.httpHeadersTimeoutMs ?? 0})`,
+            )
+          }
+        } catch (error) {
+          ctx.logger.error('llm-pi-ai: keeping the previously installed fetch guards after a refused update')
+          ctx.logger.error(error)
+        }
         // Named here rather than left to the settings watcher: `assertServiceable`
         // cannot see the llm registry, so a profile claiming a route another
         // adapter family owns is stored successfully and only fails at this swap.
