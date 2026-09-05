@@ -6,16 +6,16 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { Agent, setGlobalDispatcher } from 'undici'
-import { proxyRouteFor } from '@deepseek-ai/dsh-http-proxy'
+import { hasProxyPolicy } from '@deepseek-ai/dsh-http-proxy'
 import { Config } from '../src/config.ts'
 import { applyHttpEgressGuards, installedHttpEgressFacts, resolveHttpEgressFacts } from '../src/egress.ts'
 
-vi.mock('@deepseek-ai/dsh-http-proxy', () => ({ proxyRouteFor: vi.fn(() => ({ proxied: false })) }))
-const proxyMock = proxyRouteFor as Mock
+vi.mock('@deepseek-ai/dsh-http-proxy', () => ({ hasProxyPolicy: vi.fn(() => false) }))
+const proxyMock = hasProxyPolicy as Mock
 
 beforeEach(() => {
   proxyMock.mockReset()
-  proxyMock.mockReturnValue({ proxied: false })
+  proxyMock.mockReturnValue(false)
   setGlobalDispatcher(new Agent())
 })
 
@@ -29,14 +29,14 @@ describe('egress guard proxy coordination', () => {
   })
 
   it('yields to an active proxy policy and installs nothing', () => {
-    proxyMock.mockReturnValue({ proxied: true })
+    proxyMock.mockReturnValue(true)
     expect(applyHttpEgressGuards(Config({}))).toBe(false)
     // The proxy owns the dispatcher; our guard left it alone.
     expect(installedHttpEgressFacts()).toBeUndefined()
   })
 
-  it('treats a scheme-specific proxy as active for either scheme', () => {
-    proxyMock.mockImplementation((url: URL) => ({ proxied: url.protocol === 'https:' }))
+  it('yields when any proxy policy is installed', () => {
+    proxyMock.mockReturnValue(true)
     expect(applyHttpEgressGuards(Config({}))).toBe(false)
   })
 

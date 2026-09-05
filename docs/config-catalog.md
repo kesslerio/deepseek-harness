@@ -1036,7 +1036,9 @@ export interface Config {
    * this adapter's own `firstEventTimeoutMs` watchdog can fire. Disabling
    * returns timeout ownership to that watchdog; a finite value reinstalls a
    * dispatcher-level floor below it. Applies to every fetch in the process
-   * because pi-ai exposes no per-request fetch seam (`src/egress.ts`).
+   * because pi-ai exposes no per-request fetch seam (`src/egress.ts`). When
+ * `@deepseek-ai/dsh-http-proxy` has an active policy it owns the global dispatcher, so a
+ * finite value is not applied and undici's 300,000 ms defaults remain (a known limitation).
    */
   httpBodyTimeoutMs?: number
   /**

@@ -23,7 +23,7 @@
  */
 
 import { Agent, getGlobalDispatcher, setGlobalDispatcher } from 'undici'
-import { proxyRouteFor } from '@deepseek-ai/dsh-http-proxy'
+import { hasProxyPolicy } from '@deepseek-ai/dsh-http-proxy'
 import type { Config } from './config.ts'
 
 /** The egress-guard values this module acts on, resolved from the plugin configuration. */
@@ -58,17 +58,19 @@ export function installedHttpEgressFacts(): HttpEgressFacts | undefined {
  * its Agent carries a per-origin factory that routes proxied requests through a
  * proxy — something a bare `new Agent({ bodyTimeout, headersTimeout })` loses.
  * Replacing that dispatcher here would silently bypass a corporate proxy, so when
- * the proxy package has a policy installed for a scheme this module yields to it
- * and installs nothing.
- * @returns true when a proxy policy would route a request it is asked about.
+ * the proxy package has a policy installed this module yields to it
+ * installs nothing.
+ * @returns true when a proxy policy is installed.
  */
 function proxyPolicyActive(): boolean {
+  // Probe via the proxy package's active-policy accessor rather than a synthetic
+  // URL: a bypass/noProxy entry that happened to match a probe host would make a
+  // per-URL check report 'no proxy' while the real provider host is proxied.
   try {
-    return proxyRouteFor(new URL('https://dsh-egress-probe.invalid')).proxied
-      || proxyRouteFor(new URL('http://dsh-egress-probe.invalid')).proxied
+    return hasProxyPolicy()
   } catch {
-    // The proxy package is present (this module imports it) but no policy is
-    // installed, or routing threw: treat it as direct and install our guards.
+    // The proxy package is present (this module imports it) but routing threw:
+    // treat it as direct and install our guards.
     return false
   }
 }
