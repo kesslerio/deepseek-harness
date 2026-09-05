@@ -1027,6 +1027,27 @@ export interface Config {
    * and registers them the moment a settings section supplies profiles.
    */
   providers?: Record<string, PiAiProviderProfile>
+  /**
+   * Process-wide bound on the time between response-body chunks before the
+   * shared fetch dispatcher aborts the exchange (default 0, disabled). Node's
+   * fetch defaults this to 300,000 ms, which silently kills any request whose
+   * provider prefills longer than five minutes — streaming endpoints emit
+   * headers immediately and then stay silent until the first token — before
+   * this adapter's own `firstEventTimeoutMs` watchdog can fire. Disabling
+   * returns timeout ownership to that watchdog; a finite value reinstalls a
+   * dispatcher-level floor below it. Applies to every fetch in the process
+   * because pi-ai exposes no per-request fetch seam (`src/egress.ts`). When
+ * `@deepseek-ai/dsh-http-proxy` has an active policy it owns the global dispatcher, so a
+ * finite value is not applied and undici's 300,000 ms defaults remain (a known limitation).
+   */
+  httpBodyTimeoutMs?: number
+  /**
+   * Process-wide bound on the time to wait for response headers before the
+   * shared fetch dispatcher aborts the exchange (default 0, disabled), for
+   * the same ownership and scope reasons as {@link Config.httpBodyTimeoutMs}.
+   * The harness watchdogs bound this phase through `firstEventTimeoutMs`.
+   */
+  httpHeadersTimeoutMs?: number
 }
 
 /** Configuration for one pi-ai provider route; the `providers` dict key IS the route. */

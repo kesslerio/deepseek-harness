@@ -68,6 +68,18 @@ export function proxyRouteFor(url: URL): ProxyRoute {
 }
 
 /**
+ * Whether a proxy policy is currently installed.
+ *
+ * A consumer that only needs to know whether any policy is in force — not whether a specific URL
+ * would be proxied — can gate on this instead of probing {@link proxyRouteFor} with a synthetic URL,
+ * which would be wrong for a policy whose bypass list happens to match that probe host.
+ * @returns true when a policy is installed.
+ */
+export function hasProxyPolicy(): boolean {
+  return active !== undefined
+}
+
+/**
  * Publish a policy through the proxy environment variables, which is how the consumers that read an
  * environment rather than a policy object — `node:http`'s `proxyEnv` and every spawned child — see
  * the one resolved answer, including the `ALL_PROXY` fallback and the merged loopback bypass that

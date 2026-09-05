@@ -88,6 +88,8 @@ kind: "package-reference"
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-llm-pi-ai)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
+两个 `http*TimeoutMs` 键是进程级的，不按路由生效：Node 的 fetch 是其内置 undici，会在响应头或 body 停滞 300,000 ms 时中止该次交换，而流式端点会立即发出响应头、然后在整个 prefill 期间保持沉默——prefill 长达数分钟的请求会在路由的 `firstEventTimeoutMs` 看门狗来得及动作之前被默认值中途杀掉。插件在挂载时安装承载这两个防护的共享 fetch dispatcher（`0` 禁用对应防护——默认值，把超时所有权交还给看门狗；有限值则在其下设置一层 dispatcher 级下限），settings 变更且值不同时会重装。作用域之所以是进程级，是因为 pi-ai 构造其提供方客户端时没有 fetch 接缝；非 LLM 调用方实际上不受影响，因为它们通过 abort signal 与超时策略自持预算。
+
 ### 登录提供方
 
 pi-ai 提供登录的提供方可以通过 harness 授权 seam 登录：流程提供 OAuth 或交互式密钥提示（密钥键入 pi-ai 自己的登录提示，而非设置表单），得到的凭据存储在 harness 凭据存储的 `llm-pi-ai/<provider id>` 记录中。存储的登录在其路由的 `apiKeyEnv` 覆盖之下完成认证，并在存储的跨进程锁下自行刷新；退出登录即删除存储记录。落在记录文法之外——小写连字符标识符——的手工声明路由键无法登录，因为对它的记录写入会以 `LlmError('UNSTORABLE_PROVIDER_ID')` 拒绝；这类路由改用 `apiKeyEnv` 或提供方 ambient 设置认证。
@@ -205,6 +207,7 @@ pi-ai 事件变成 harness 的推理、文本、工具调用、用量与 finish 
 
 这些限制说明适配器在哪里停止、由未来工作接续。它们是当前包约束，不是通用 pi-ai 对比或任务积压。
 
+- **出口防护是进程级的，不按路由生效**：pi-ai 构造其 OpenAI 客户端时没有 fetch 接缝（`new OpenAI({ apiKey, baseURL })`），因此 `httpBodyTimeoutMs`/`httpHeadersTimeoutMs` 为整个进程安装一个共享 fetch dispatcher，而不是附着在每个提供方请求上。非 LLM 调用方通过 abort signal 与超时策略自持预算，但未来若有人依赖 undici 内置的 300,000 ms 默认值作为兜底，就会无声地失去它；OpenAI 客户端已支持 `fetchOptions`，pi-ai 若透传即可让这些字段变成按 profile 的字段。当 `@deepseek-ai/dsh-http-proxy` 的策略处于活动状态时，防护也会让其接管：该包拥有 undici 的全局 dispatcher 以做代理路由，适配器此时不安装任何东西，代理 dispatcher 保留其默认超时——除非把两者打进同一个 dispatcher，否则这是协调缺口。
 - **`maxRequestImageBytes` 只计算 base64 图片载荷**——文本、工具、描述符与 JSON 结构在该上限之外，因此它必须留有余量地低于网关请求体上限。卸载是确定性请求投影，不会记录为会话事件。
 - **登录只存在于发起它的进程中**——授权尝试不持久，因此登录中途刷新页面会放弃它，用户需要重新开始。退出登录是对已存储记录执行 `deleteRecord`，只在本地忘记它，不会告知签发方。
 - **提供方原生发现经本插件的 ambient context 回答**——不点名凭据的路由交由目录提供方自身解析，它会询问环境值（`AZURE_OPENAI_API_KEY`、`AWS_PROFILE` 及各提供方自有集合）与本地凭据文件。两个问题都在这里得到回答：凭据 seam 先于进程环境被查询，文件存在性则针对宿主进程的文件系统以 `~` 展开后检查。它做不到的是*读取*凭据文件内容——自行解析 `~/.aws/credentials` 的提供方会直接读取，不经该 seam。
