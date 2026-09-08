@@ -857,6 +857,10 @@ describe('mapStopReason / mapUsage', () => {
   it('uses pi-ai provider-specific overflow classification without losing rate-limit exclusions', () => {
     expect(mapStopReason(assistant({
       stopReason: 'error',
+      errorMessage: "insufficient memory: this prompt projects 99.2 GiB against the engine's 96.0 GiB limit (3.2 GiB over) after the allocator cache and the session bank were reclaimed (136234 prompt tokens, 136234 not cached). The engine stays up and keeps its sessions; this request was refused before prefill instead of pushing the Mac into swap.",
+    }))).toMatchObject({ kind: 'error', failure: { code: CONTEXT_WINDOW_EXCEEDED_CODE } })
+    expect(mapStopReason(assistant({
+      stopReason: 'error',
       errorMessage: 'insufficient memory: the request exceeded available GPU memory (sustained critical memory pressure during prefill; aborted before the allocator wall).',
     }))).toMatchObject({ kind: 'error', failure: { code: CONTEXT_WINDOW_EXCEEDED_CODE } })
     expect(mapStopReason(assistant({
