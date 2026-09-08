@@ -101,6 +101,13 @@ async function collect(stream: AsyncIterable<StreamChunk>): Promise<StreamChunk[
 }
 
 describe('LlmRuntime', () => {
+  it('recognizes request-sized MTPLX prefill memory rejection without treating other memory failures as overflow', () => {
+    expect(isContextWindowExceededError('insufficient memory: the request exceeded available GPU memory (sustained critical memory pressure during prefill; aborted before the allocator wall). The engine shed its caches and stays up; this request failed. Reduce --context-window, close other apps, or try q8 KV quantization.')).toBe(true)
+    expect(isContextWindowExceededError('insufficient memory while loading model weights')).toBe(false)
+    expect(isContextWindowExceededError('CUDA out of memory during generation')).toBe(false)
+    expect(isContextWindowExceededError('model owner made no progress for 302s; request aborted by the stream stall watchdog (MTPLX_STREAM_STALL_DEADLINE_S)')).toBe(false)
+  })
+
   it('recognizes structured and model-capacity context-window overflow details', () => {
     expect(isContextWindowExceededError('context_length_exceeded maximum context length')).toBe(true)
     expect(isContextWindowExceededError('context-window-overflowed')).toBe(true)

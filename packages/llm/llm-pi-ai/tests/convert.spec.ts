@@ -857,6 +857,10 @@ describe('mapStopReason / mapUsage', () => {
   it('uses pi-ai provider-specific overflow classification without losing rate-limit exclusions', () => {
     expect(mapStopReason(assistant({
       stopReason: 'error',
+      errorMessage: 'insufficient memory: the request exceeded available GPU memory (sustained critical memory pressure during prefill; aborted before the allocator wall).',
+    }))).toMatchObject({ kind: 'error', failure: { code: CONTEXT_WINDOW_EXCEEDED_CODE } })
+    expect(mapStopReason(assistant({
+      stopReason: 'error',
       errorMessage: 'prompt is too long: 213462 tokens > 200000 maximum',
     }))).toMatchObject({ kind: 'error', failure: { code: CONTEXT_WINDOW_EXCEEDED_CODE } })
     expect(mapStopReason(assistant({
