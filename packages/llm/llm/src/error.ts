@@ -75,7 +75,8 @@ const EXCEEDS_MODEL_CONTEXT = new RegExp(
  * and library adapters. Adapters pass all available provider code, type, and
  * message text so both thrown and in-band delivery styles share one classifier.
  * @param detail - provider error code/type/message text joined into one string.
- * @returns true when the detail identifies a request exceeding the model context window.
+ * @returns true when the detail identifies a request exceeding the model context
+ *   window or MTPLX's available prefill memory; unrelated GPU failures do not qualify.
  */
 export function isContextWindowExceededError(detail: string): boolean {
   return STRUCTURED_CONTEXT_OVERFLOW.test(detail)
@@ -83,6 +84,9 @@ export function isContextWindowExceededError(detail: string): boolean {
     || TOO_LARGE_FOR_CONTEXT.test(detail)
     || /\b(?:input|prompt|request)\s+(?:is\s+)?too\s+(?:long|large)\s+for\s+(?:this|the)\s+model\b/i.test(detail)
     || EXCEEDS_MODEL_CONTEXT.test(detail)
+    // MTPLX rejects oversized prefill before allocation, below the advertised
+    // token limit. Only this request-sized rejection qualifies for compaction.
+    || /\bthe request exceeded available GPU memory \(sustained critical memory pressure during prefill;/i.test(detail)
 }
 
 /**
