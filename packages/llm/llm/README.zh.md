@@ -66,7 +66,7 @@ for await (const chunk of ctx.llm.stream({
 
 ### 失败与恢复
 
-MTPLX 因预填充期间持续严重内存压力而拒绝请求时，会映射为 `CONTEXT_WINDOW_EXCEEDED`，从而在尚未达到声明的令牌上限时触发有限次数的压缩恢复。模型加载失败、一般 GPU 分配错误和流停滞不属于此类。压缩仍要求摘要模型有足够内存处理所选历史。
+MTPLX 因预计提示词内存超过引擎预算或预填充期间持续严重内存压力而拒绝请求时，会映射为 `CONTEXT_WINDOW_EXCEEDED`，从而在尚未达到声明的令牌上限时触发有限次数的压缩恢复。模型加载失败、一般 GPU 分配错误和流停滞不属于此类。压缩仍要求摘要模型有足够内存处理所选历史。
 
 每个流都恰好以一个终止 `finish` 分片结束：失败为 `{ kind: 'error', failure }`，取消为 `{ kind: 'aborted', failure }`。失败携带稳定 code，如 `NO_ADAPTER`、`MISSING_CREDENTIAL`、`AUTH`、`RATE_LIMIT` 与 `CONTEXT_WINDOW_EXCEEDED`；消费方依据 code 路由，绝不解析消息文本。点名未注册提供方的请求会以 `NO_ADAPTER` 失败，格式错误的凭据会以 `INVALID_CREDENTIAL` 失败，而不是表现为不透明的 fetch 错误。本服务从不自行重跑请求：重试是 `dsh-llm-retry` 在 agent 失败步骤扩展点上的职责。
 

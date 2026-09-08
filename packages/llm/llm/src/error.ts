@@ -84,9 +84,10 @@ export function isContextWindowExceededError(detail: string): boolean {
     || TOO_LARGE_FOR_CONTEXT.test(detail)
     || /\b(?:input|prompt|request)\s+(?:is\s+)?too\s+(?:long|large)\s+for\s+(?:this|the)\s+model\b/i.test(detail)
     || EXCEEDS_MODEL_CONTEXT.test(detail)
-    // MTPLX rejects oversized prefill before allocation, below the advertised
-    // token limit. Only this request-sized rejection qualifies for compaction.
+    // MTPLX rejects requests at admission or during prefill below the advertised
+    // token limit. Only these request-sized rejections qualify for compaction.
     || /\bthe request exceeded available GPU memory \(sustained critical memory pressure during prefill;/i.test(detail)
+    || /\binsufficient memory: this prompt projects \d+(?:\.\d+)? GiB against the engine's \d+(?:\.\d+)? GiB limit\b/i.test(detail)
 }
 
 /**
