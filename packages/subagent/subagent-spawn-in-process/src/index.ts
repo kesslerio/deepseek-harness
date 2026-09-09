@@ -55,8 +55,19 @@ class SpawnInProcessProvider implements SubagentProvider {
   }
   // Context contract: a spawned child starts fresh — it never sees the parent conversation.
   readonly inheritsParentContext = false
+  // One-parent hard cap for continuable admission. Declared optional so the
+  // field satisfies the optional `SubagentProvider.concurrencyLimit` as an
+  // optional property rather than a required `number | undefined` — under
+  // `exactOptionalPropertyTypes` a required field typed `number | undefined`
+  // is not assignable to an optional `number` target. Omission (or a value
+  // `<= 0`) means uncapped.
+  readonly concurrencyLimit?: number
 
-  constructor(readonly name: string, readonly concurrencyLimit: number | undefined) {}
+  constructor(readonly name: string, concurrencyLimit: number | undefined) {
+    if (concurrencyLimit !== undefined) {
+      this.concurrencyLimit = concurrencyLimit
+    }
+  }
 
   start(request: ResolvedSubagentStartRequest) {
     // Fresh child: no seed. The shared driver mints ids, stamps cwd/lineage/
