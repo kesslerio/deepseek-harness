@@ -25,10 +25,17 @@ export const inject = ['subagents']
 export interface Config {
   /** Provider name on `ctx.subagents` (default `spawn`). */
   providerName: string
+  /**
+   * Optional hard cap on continuable children admitted to one delegating parent
+   * at a time. Omitted (or `0`) means uncapped. Read by the continuation
+   * manager at admission; a non-capped provider behaves exactly as before.
+   */
+  concurrencyLimit?: number
 }
 
 export const Config: z<Config> = z.object({
   providerName: z.string().default('spawn'),
+  concurrencyLimit: z.number().step(1).min(0),
 })
 
 /**
@@ -49,7 +56,7 @@ class SpawnInProcessProvider implements SubagentProvider {
   // Context contract: a spawned child starts fresh — it never sees the parent conversation.
   readonly inheritsParentContext = false
 
-  constructor(readonly name: string) {}
+  constructor(readonly name: string, readonly concurrencyLimit: number | undefined) {}
 
   start(request: ResolvedSubagentStartRequest) {
     // Fresh child: no seed. The shared driver mints ids, stamps cwd/lineage/
@@ -66,5 +73,5 @@ class SpawnInProcessProvider implements SubagentProvider {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  ctx.subagents.registerProvider(new SpawnInProcessProvider(config.providerName))
+  ctx.subagents.registerProvider(new SpawnInProcessProvider(config.providerName, config.concurrencyLimit))
 }

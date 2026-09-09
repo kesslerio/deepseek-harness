@@ -509,3 +509,32 @@ describe('dsh-subagent-spawn-in-process', () => {
     expect(published).toEqual([])
   })
 })
+
+describe('dsh-subagent-spawn-in-process: config concurrencyLimit', () => {
+  it('advertises the cap on the registered provider and leaves a non-capped provider undefined', async () => {
+    const ctx = new Context()
+    await mountInvariants(ctx)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentRuntime)
+    await ctx.plugin(spawn, { providerName: 'concurrent-2', concurrencyLimit: 2 })
+    await ctx.plugin(spawn, { providerName: 'spawn' })
+
+    expect(ctx.subagents.getProvider('concurrent-2')?.concurrencyLimit).toBe(2)
+    expect(ctx.subagents.getProvider('spawn')?.concurrencyLimit).toBeUndefined()
+  })
+
+  it('rejects a non-integer or negative concurrencyLimit at config validation', async () => {
+    const ctx = new Context()
+    await mountInvariants(ctx)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentRuntime)
+    await ctx.plugin(spawn, { providerName: 'spawn' })
+
+    for (const invalid of [1.5, -1]) {
+      await expect(ctx.plugin(spawn, { providerName: `bad-${String(invalid)}`, concurrencyLimit: invalid }))
+        .rejects.toThrow()
+      // The rejected mount registers no provider, so the base path stays clean.
+      expect(ctx.subagents.list()).not.toContain(`bad-${String(invalid)}`)
+    }
+  })
+})

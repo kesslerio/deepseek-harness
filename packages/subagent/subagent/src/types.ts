@@ -360,6 +360,17 @@ export interface SubagentProvider {
    */
   readonly agentRouteDefaults?: Readonly<{ provider: string; model: string }>
   /**
+   * Optional hard cap on how many continuable children this provider admits for
+   * one delegating parent at a time. The continuation manager reads it at
+   * admission: a start whose parent already has `concurrencyLimit` resident or
+   * reserved continuable children is rejected loud (`CONCURRENCY_LIMIT`) before
+   * the child Agent is materialized. Omission (or a value `<= 0`) means uncapped,
+   * so a provider that omits it behaves exactly as before. This is admission
+   * state, not a start-time capability: it governs the continuable path, which
+   * the manager composes, not the one-shot {@link SubagentProvider.start} path.
+   */
+  readonly concurrencyLimit?: number
+  /**
    * Establish a ONE-SHOT child and return its handle after publication.
    * The service has already validated that every requested start-time
    * capability is supported and resolved `request.descriptor`, so a

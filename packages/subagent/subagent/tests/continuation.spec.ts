@@ -3495,3 +3495,101 @@ describe('SubagentRuntime.interrupt', () => {
     await drained
   })
 })
+
+describe('SubagentRuntime.startContinuable: subagent concurrency limit', () => {
+  it('admits a capped start at 0 and 1 resident, rejects the third at the cap, then admits it again after the residents settle', async () => {
+    const release = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([
+      { chunks: textResponse('a'), gate: release.promise },
+      { chunks: textResponse('b'), gate: release.promise },
+    ])
+    const { ctx, parent } = await setupWith(adapter)
+    await ctx.plugin(SubagentSpawn, { providerName: 'capped', concurrencyLimit: 2 })
+
+    const startEvents = vi.fn()
+    ctx.on('subagent/start', startEvents)
+
+    const first = await ctx.subagents.startContinuable(startSpec(parent, 'capped'))
+    const second = await ctx.subagents.startContinuable(startSpec(parent, 'capped'))
+    await vi.waitFor(() => { expect(adapter.requests).toHaveLength(2) })
+
+    // Pool is full (2 resident, cap 2): the third start is rejected loudly and
+    // creates no child, so no lifecycle edge is emitted for it.
+    await expect(ctx.subagents.startContinuable(startSpec(parent, 'capped')))
+      .rejects.toMatchObject({ code: 'CONCURRENCY_LIMIT' })
+    expect(startEvents).toHaveBeenCalledTimes(2)
+
+    release.resolve(undefined)
+    await waitNoActivation(ctx, first.childId)
+    await waitNoActivation(ctx, second.childId)
+
+    // Both residents disposed: the pool frees and the next start is admitted.
+    const third = await ctx.subagents.startContinuable(startSpec(parent, 'capped'))
+    await waitNoActivation(ctx, third.childId)
+  })
+
+  it('counts one session-wide pool across two capped providers under one parent', async () => {
+    const release = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([
+      { chunks: textResponse('s1'), gate: release.promise },
+      { chunks: textResponse('s2'), gate: release.promise },
+      { chunks: textResponse('f1'), gate: release.promise },
+    ])
+    const { ctx, parent } = await setupWith(adapter)
+    await ctx.plugin(SubagentSpawn, { providerName: 'concurrent-2', concurrencyLimit: 2 })
+    await ctx.plugin(SubagentFork, { providerName: 'concurrent-2-fork', concurrencyLimit: 2 })
+
+    const s1 = await ctx.subagents.startContinuable(startSpec(parent, 'concurrent-2'))
+    const f1 = await ctx.subagents.startContinuable(startSpec(parent, 'concurrent-2-fork'))
+    await vi.waitFor(() => { expect(adapter.requests).toHaveLength(2) })
+
+    // One spawn child and one fork child share the pool: a third start from
+    // either provider observes both and is bounded (R2).
+    await expect(ctx.subagents.startContinuable(startSpec(parent, 'concurrent-2')))
+      .rejects.toMatchObject({ code: 'CONCURRENCY_LIMIT' })
+    await expect(ctx.subagents.startContinuable(startSpec(parent, 'concurrent-2-fork')))
+      .rejects.toMatchObject({ code: 'CONCURRENCY_LIMIT' })
+
+    release.resolve(undefined)
+    await waitNoActivation(ctx, s1.childId)
+    await waitNoActivation(ctx, f1.childId)
+  })
+
+  it('admits more than the cap on an uncapped provider, leaving the default path unchanged', async () => {
+    const release = Promise.withResolvers<undefined>()
+    const adapter = new GatedAdapter([
+      { chunks: textResponse('a'), gate: release.promise },
+      { chunks: textResponse('b'), gate: release.promise },
+      { chunks: textResponse('c'), gate: release.promise },
+    ])
+    const { ctx, parent } = await setupWith(adapter)
+    // `spawn` carries no concurrencyLimit, so the gate never enters its branch.
+    const a = await ctx.subagents.startContinuable(startSpec(parent, 'spawn'))
+    const b = await ctx.subagents.startContinuable(startSpec(parent, 'spawn'))
+    const c = await ctx.subagents.startContinuable(startSpec(parent, 'spawn'))
+    await vi.waitFor(() => { expect(adapter.requests).toHaveLength(3) })
+    expect(new Set([a.childId, b.childId, c.childId]).size).toBe(3)
+
+    release.resolve(undefined)
+    await waitNoActivation(ctx, a.childId)
+    await waitNoActivation(ctx, b.childId)
+    await waitNoActivation(ctx, c.childId)
+  })
+
+  it('releases its reservation when a start fails before materializing a resident child', async () => {
+    const { ctx, parent } = await setupWith(new MockAdapter([textResponse('unused')]))
+    await ctx.plugin(SubagentSpawn, { providerName: 'capped', concurrencyLimit: 1 })
+
+    const aborted = new AbortController()
+    aborted.abort('caller gave up')
+
+    // The reservation is taken, then the caller signal throws before the child
+    // is materialized; the finally must free the slot.
+    await expect(ctx.subagents.startContinuable(startSpec(parent, 'capped', aborted.signal)))
+      .rejects.toThrow()
+
+    // A fresh start is admitted rather than blocked by a leaked reservation.
+    const next = await ctx.subagents.startContinuable(startSpec(parent, 'capped'))
+    await waitNoActivation(ctx, next.childId)
+  })
+})

@@ -259,3 +259,34 @@ describe('dsh-subagent-fork-in-process', () => {
     expect(typeof unwrapped.apply).toBe('function')
   })
 })
+
+describe('dsh-subagent-fork-in-process: config concurrencyLimit', () => {
+  async function mountCapped(config: { concurrencyLimit?: number }) {
+    const ctx = new Context()
+    await mountAgentLoopTestDependencies(ctx)
+    await mountInvariants(ctx)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    await ctx.plugin(SubagentRuntime)
+    await ctx.plugin(fork, { providerName: 'capped-fork', ...config })
+    return ctx
+  }
+
+  it('advertises the cap on a registered provider and leaves a non-capped provider undefined', async () => {
+    const ctx = await mountCapped({ concurrencyLimit: 2 })
+    await ctx.plugin(fork, { providerName: 'fork' })
+
+    expect(ctx.subagents.getProvider('capped-fork')?.concurrencyLimit).toBe(2)
+    expect(ctx.subagents.getProvider('fork')?.concurrencyLimit).toBeUndefined()
+  })
+
+  it('rejects a non-integer or negative concurrencyLimit at config validation', async () => {
+    const ctx = await mountCapped({ concurrencyLimit: 2 })
+
+    for (const invalid of [1.5, -1]) {
+      await expect(ctx.plugin(fork, { providerName: `bad-${String(invalid)}`, concurrencyLimit: invalid }))
+        .rejects.toThrow()
+      // The rejected mount registers no provider, so the base path stays clean.
+      expect(ctx.subagents.list()).not.toContain(`bad-${String(invalid)}`)
+    }
+  })
+})

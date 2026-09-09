@@ -68,6 +68,14 @@ type ChildDeliveryOptions =
 interface ContinuationHost {
   /** Resolve one provider's detached continuable-creation contribution. */
   prepareContinuable(name: string, request: ContinuableCreateRequest): Promise<ContinuableCreateSpec>
+  /**
+   * The named provider's hard cap on continuable children admitted to one
+   * delegating parent at a time, or `undefined` when the provider imposes no
+   * cap. Read at admission; a provider that omits a cap stays uncapped.
+   * @param name - the configured provider name.
+   * @returns the concurrency cap, or undefined for uncapped.
+   */
+  concurrencyLimit(name: string): number | undefined
   /** Build the lifecycle observer for one Activation residency epoch. */
   observeActivation(provider: string, childId: SessionId, parent: Agent): ActivationObserver
 }
@@ -80,6 +88,14 @@ interface ContinuationHost {
  */
 export class SubagentContinuationManager {
   private readonly activations: ContinuableActivationRegistry
+  /**
+   * child session id → its delegating parent, for one in-flight admission that
+   * has reserved a concurrency slot but not yet materialized. Released when the
+   * materialization completes (success or rollback) so a rejected or aborted
+   * start frees its slot. Counted against the parent alongside live activations
+   * so a simultaneous burst cannot overshoot the cap. Process-local, never durable.
+   */
+  private readonly reserved = new Map<SessionId, SessionId>()
 
   constructor(
     private readonly ctx: Context,
@@ -106,6 +122,31 @@ export class SubagentContinuationManager {
     assertSubagentMaxDepth(request.maxDepth)
     const childId = spec.childId ?? brandString<SessionId>(randomUUID())
     this.activations.assertChildIdAvailable(childId)
+
+    // Concurrency gate. Runs in the synchronous prefix — the first await is
+    // `prepareContinuable` below — so the count-and-reserve is atomic w.r.t.
+    // concurrent starts: each caller sees a stable pool before adding its own
+    // reservation, and the pool counts live activations plus in-flight
+    // reservations. A capped provider rejects loud.
+    let reserved = false
+    const concurrencyLimit = this.host.concurrencyLimit(spec.provider)
+    if (concurrencyLimit !== undefined && concurrencyLimit > 0) {
+      if (this.concurrencyInUse(parent.id) >= concurrencyLimit) {
+        throw new SubagentError(
+          `subagent concurrency limit of ${concurrencyLimit} reached for session ${parent.id}`,
+          'CONCURRENCY_LIMIT',
+        )
+      }
+      this.reserved.set(childId, parent.id)
+      reserved = true
+    }
+    const releaseReservation = () => {
+      if (reserved) {
+        reserved = false
+        this.reserved.delete(childId)
+      }
+    }
+
     const childDepth = resolveChildDepth(parent, request.maxDepth)
     // Snapshot before any await: invalid descriptor JSON rejects the call
     // before a child exists, and the detached value is what reaches the log.
@@ -183,7 +224,26 @@ export class SubagentContinuationManager {
     } catch (error: unknown) {
       releaseHold()
       throw error
+    } finally {
+      releaseReservation()
     }
+  }
+
+  /**
+   * Count the continuable children a parent currently has admitted: each live
+   * Activation under it plus each in-flight reservation for it. This is the
+   * number that a capped provider's {@link ContinuationHost.concurrencyLimit}
+   * is checked against at admission, so a burst of simultaneous starts observes
+   * a stable pool before any of its own reservations settle.
+   * @param parent - the exact live direct parent whose pool is measured.
+   * @returns the number of resident plus reserved children still admitted.
+   */
+  private concurrencyInUse(parent: SessionId): number {
+    let count = this.activations.residentCountForParent(parent)
+    for (const reservedParent of this.reserved.values()) {
+      if (reservedParent === parent) count++
+    }
+    return count
   }
 
   /**

@@ -208,6 +208,21 @@ export class ContinuableActivationRegistry {
   }
 
   /**
+   * Count the resident direct children whose exact direct parent is `parent`.
+   * Used by the concurrency gate to measure a delegating parent's admitted pool
+   * so a capped provider can reject a start once its pool is full.
+   * @param parent - exact live direct parent whose admitted children are counted.
+   * @returns the number of resident children under that parent.
+   */
+  residentCountForParent(parent: SessionId): number {
+    let count = 0
+    for (const activation of this.resident.values()) {
+      if (activation.parentSession === parent) count++
+    }
+    return count
+  }
+
+  /**
    * Reject one child identity already owned by a live Agent or Session.
    * @param childId - proposed durable child session id.
    */

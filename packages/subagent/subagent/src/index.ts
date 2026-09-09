@@ -199,6 +199,10 @@ export class SubagentRuntime extends TypertRemoteService {
     ctx.inject(['agents'], (childCtx: Context) => {
       const manager = new SubagentContinuationManager(childCtx, {
         prepareContinuable: (name, request) => this.prepareContinuable(name, request),
+        // Non-throwing lookup: an unknown or absent provider yields no cap, so
+        // admission stays uncapped and `prepareContinuable` performs the real
+        // "provider exists" check separately.
+        concurrencyLimit: name => this.providers.get(name)?.concurrencyLimit,
         observeActivation: (provider, childId, parent) => this.observeActivation(provider, childId, parent),
       })
       this.continuations = manager

@@ -31,10 +31,17 @@ export const inject = ['subagents']
 export interface Config {
   /** Provider name on `ctx.subagents` (default `fork`). */
   providerName: string
+  /**
+   * Optional hard cap on continuable children admitted to one delegating parent
+   * at a time. Omitted (or `0`) means uncapped. Read by the continuation
+   * manager at admission; a non-capped provider behaves exactly as before.
+   */
+  concurrencyLimit?: number
 }
 
 export const Config: z<Config> = z.object({
   providerName: z.string().default('fork'),
+  concurrencyLimit: z.number().step(1).min(0),
 })
 
 /**
@@ -70,7 +77,7 @@ class ForkInProcessProvider implements SubagentProvider {
   // Context contract: a forked child IS seeded with the parent's completed-turn prefix.
   readonly inheritsParentContext = true
 
-  constructor(readonly name: string) {}
+  constructor(readonly name: string, readonly concurrencyLimit: number | undefined) {}
 
   start(request: ResolvedSubagentStartRequest) {
     const seed = completedTurnPrefix(request.parent)
@@ -91,5 +98,5 @@ class ForkInProcessProvider implements SubagentProvider {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  ctx.subagents.registerProvider(new ForkInProcessProvider(config.providerName))
+  ctx.subagents.registerProvider(new ForkInProcessProvider(config.providerName, config.concurrencyLimit))
 }
