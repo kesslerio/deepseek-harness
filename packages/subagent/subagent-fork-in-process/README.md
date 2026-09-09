@@ -50,6 +50,7 @@ Load the subagent service and this backend, then configure a delegation tool. Th
 | Field | Default | Meaning |
 |---|---|---|
 | `providerName` | `fork` | Provider name registered on `ctx.subagents` |
+| `concurrencyLimit` | none | Optional hard cap on how many continuable children one delegating parent admits at once. Omit, or set to `0`, for uncapped. Enforced at continuable admission — a rejected start rejects loudly with code `CONCURRENCY_LIMIT` and creates no child; fork children are gated only when this provider is a capped instance. |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-subagent-fork-in-process) is the exhaustive source for every accepted field and its JSDoc.
 

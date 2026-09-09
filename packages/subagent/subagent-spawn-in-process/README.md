@@ -46,6 +46,7 @@ Load the subagent service and this backend, then configure one delegation tool p
 | Field | Default | Meaning |
 |---|---|---|
 | `providerName` | `spawn` | Provider name registered on `ctx.subagents` |
+| `concurrencyLimit` | none | Optional hard cap on how many continuable children one delegating parent admits at once. Omit, or set to `0`, for uncapped. Enforced at continuable admission — a rejected start rejects loudly with code `CONCURRENCY_LIMIT` and creates no child — and one-shot foreground delegation stays ungated. |
 
 The generated [configuration catalog](../../../docs/config-catalog.md#deepseek-aidsh-subagent-spawn-in-process) is the exhaustive source for every accepted field and its JSDoc.
 
