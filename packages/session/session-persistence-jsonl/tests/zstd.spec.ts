@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { appendFile, mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, open, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { SessionSeq, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session'
+import { SessionOwnershipLostError } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import {
@@ -507,6 +508,29 @@ describe('JsonlSessionPersistence: default Zstandard encoding', () => {
     expect(after.subarray(0, before.length)).toEqual(before)
     expect(scanZstdFrames(after).frames).toHaveLength(3)
     expect((await readAll(ctx.sessionPersistence, header.id)).events).toEqual([...oneTurnLog(), ...secondTurn])
+  })
+
+  it('refuses to recreate a materialized log after its path disappears', async () => {
+    const root = await freshRoot()
+    const ctx = await mount(root)
+    const header = meta('append-after-move')
+    const handle = await ctx.sessionPersistence.create(header)
+    await handle.append(oneTurnLog())
+    const path = logPath(root, header.cwd, header.id, 'zstd')
+    const before = await readFile(path)
+    const moved = `${path}.moved`
+    await rename(path, moved)
+    const secondTurn: SessionEvent[] = [
+      { type: 'turn/start', seq: SessionSeq(6), time: 7, data: { turn: 2 } },
+    ]
+
+    try {
+      await expect(handle.append(secondTurn)).rejects.toBeInstanceOf(SessionOwnershipLostError)
+    } finally {
+      await handle.close()
+    }
+    await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(moved)).toEqual(before)
   })
 
   it('lists from a multi-chunk header frame without decoding a corrupt event frame', async () => {

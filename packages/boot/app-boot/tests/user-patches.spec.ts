@@ -478,6 +478,58 @@ describe('boot with user patches', () => {
     }
   })
 
+  it('keeps the committed tree alive when a user-layer reload fails', { timeout: 20_000 }, async () => {
+    // theshop (2026-09-16): a live-reload failure disposed the committed
+    // plugin tree and left a booted web server whose every Host RPC failed
+    // ("sessionController unavailable"). A rejected candidate must roll back
+    // to the last good config with the committed tree intact — a dead tree is
+    // a fatal failure for the process, not a recoverable reload.
+    const dir = tmp()
+    const userDir = tmp()
+    writeFileSync(join(dir, 'poison.mjs'), [
+      'export function apply(ctx, config = {}) {',
+      '  if (config.fail) throw new Error("candidate config failed")',
+      '}',
+      '',
+    ].join('\n'))
+    writeFileSync(join(dir, 'cordis.yml'), [
+      '- id: poison',
+      '  name: ./poison.mjs',
+      '  config:',
+      '    fail: false',
+      '',
+    ].join('\n'))
+    const filename = join(userDir, PROFILE_PATCH_FILENAME)
+    const ctx = await boot(NAME, join(dir, 'cordis.yml'))
+    onTestFinished(() => ctx.fiber.dispose())
+    await ctx.plugin(Timer)
+    await ctx.plugin(Hmr, { root: [], ignored: [], debounce: 0 })
+    const watchers: FSWatcher[] = []
+    const previousFactory = configWatch.create
+    onTestFinished(() => { configWatch.create = previousFactory })
+    configWatch.create = (options) => {
+      const watcher = new FSWatcher(options)
+      watchers.push(watcher)
+      queueMicrotask(() => { watcher.emit('ready') })
+      return watcher
+    }
+    const failures: Array<{ filename: string; error: Error }> = []
+    ctx.on('hmr/config-update-failed', (failedFilename, error) => {
+      failures.push({ filename: failedFilename, error })
+    })
+    await watchUserPatches(ctx, {
+      binName: NAME,
+      filename,
+      compose: userPatches => userPatches.length === 0 ? userPatches : [...userPatches, { id: 'poison', config: { fail: true } }],
+    })
+    writeFileSync(filename, '- id: poison\n  config:\n    fail: true\n')
+    watchers[0]!.emit('add', filename)
+    await eventually(() => failures.length === 1, 'poison candidate failure was not broadcast')
+    expect(failures[0]).toMatchObject({ filename })
+    expect(ctx.get('loader')).toBeDefined()
+    expect(entryConfig(ctx, 'poison')).toEqual({ fail: false })
+  })
+
   it('fails loud when the exact watcher lacks HMR or a root Include', async () => {
     const dir = tmp()
     const withoutHmr = await boot(NAME, writeTree(dir))

@@ -14,6 +14,7 @@ import {
 } from '@deepseek-ai/dsh-session-format-catalog'
 import { readdirSync, type Dirent } from 'node:fs'
 import { open, mkdir, readdir, realpath, link, rm, stat, truncate } from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { scheduler } from 'node:timers/promises'
@@ -21,7 +22,7 @@ import { randomBytes } from 'node:crypto'
 import {
   SessionPersistence, SessionPersistenceRevision, SessionFormatUnsupportedError,
   SessionPersistenceCorruptionError,
-  SessionAlreadyExistsError, SessionPersistenceNotFoundError,
+  SessionAlreadyExistsError, SessionOwnershipLostError, SessionPersistenceNotFoundError,
   assertStoredId, materializeCreateHeader, sessionFormatVersionRefusal, validateStoredEvents,
   type SessionAccess, type SessionHandle,
   type SessionHandleReadResult,
@@ -1246,7 +1247,16 @@ class JsonlSessionPersistence extends SessionPersistence {
   private async appendLines(meta: SessionHeader, events: readonly SessionEvent[]): Promise<void> {
     const content = await this.encodeEventBatch(events)
     const path = logPath(this.root, meta.cwd, meta.id, this.compression)
-    const handle = await open(path, 'a')
+    let handle: FileHandle
+    try {
+      // A materialized append must never create a replacement file: an active
+      // writer can outlive an external move of its original artifact.
+      handle = await open(path, 'r+')
+    } catch (error: unknown) {
+      if (!isENOENT(error)) throw error
+      this.ctx.logger.warn(`${this.name}: materialized session "${meta.id}" disappeared before append at "${path}"`)
+      throw new SessionOwnershipLostError(meta.id)
+    }
     let closed = false
     const closeAppendHandle = async (): Promise<void> => {
       if (closed) return
@@ -1257,7 +1267,11 @@ class JsonlSessionPersistence extends SessionPersistence {
     try {
       const { size: before } = await handle.stat()
       try {
-        await handle.writeFile(content)
+        if (typeof content === 'string') {
+          await handle.write(content, before)
+        } else {
+          await handle.write(content, 0, content.length, before)
+        }
         await handle.sync()
       } catch (error) {
         try {
