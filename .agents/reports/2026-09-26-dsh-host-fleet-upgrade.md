@@ -49,3 +49,26 @@ Session data: `SESSION_FORMAT_VERSION` moved 3 → 4 between the tags and 0.1.7-
 6. Mac curl 401s during testing were stale tokens read from the append-only launchd log, not auth regressions; a fresh-boot token completed the handshake at 200.
 
 All three hosts updated; fleet is uniform on `0.1.7-rc.2`.
+
+## Findings addendum (2026-09-26, after firstmate inbox 003)
+
+### Interactive wrapper repointed on both remotes
+
+The gap firstmate measured was real: the service overrides set `DSH_SOURCE_DIR=~/projects/tools/dsh-0.1.5`, but the `~/.local/bin/dsh` wrapper default still pointed at the non-git `~/projects/tools/deepseek-harness` snapshot (0.1.5-alpha.1, Sept 8), so a typed `dsh --version` reported the stale tree and a rebuild there rebuilt the wrong copy. Resolution, on theshop and mama: edited the wrapper default in place (`${DSH_SOURCE_DIR:-$HOME/projects/tools/dsh-0.1.5}`), previous script kept as `~/.local/bin/dsh.bak-20260926`. On theshop the wrapper additionally prepends `~/opt/node-v22.23.1-linux-x64/bin` to PATH, so interactive launches use the same recognized node the service drop-in selects. The stale 0.1.5-alpha.1 snapshot directory was left in place untouched; nothing references it anymore. Proof, fresh login shells, no environment overrides:
+
+```
+theshop $ bash -lc "command -v dsh; dsh --version"   →  /home/art/.local/bin/dsh  0.1.7-rc.2
+mama    $ bash -lc "command -v dsh; dsh --version"   →  /home/art/.local/bin/dsh  0.1.7-rc.2
+```
+
+On theshop, `timeout 20 bash -lc "dsh web --no-open"` ran the full 20 s (exit 124, no fatal): the interactive boot now passes the `node-addon-require-builtin` probe that killed the stock nix node before the wrapper change. The systemd services are unaffected by the wrapper edit because their drop-ins still pass `DSH_SOURCE_DIR` explicitly.
+
+### Browser verification, stated plainly
+
+Yes, I opened both moved interfaces myself in a real browser (agent-browser, headless Chromium, from the Mac over the tailnet): `https://theshop.tail24e2e0.ts.net/?token=…` and `https://mama.tail24e2e0.ts.net/?token=…` (note: root path, not the removed `/dsh` prefix). Each completed the token handshake, rendered the app shell showing the header badge `0.1.7-rc.2-477b4f4`, listed the host's real sessions, and responded to clicking through the Internal Testing Notice into the composer. Screenshots: `/tmp/dsh-fleet-theshop-017.png`, `/tmp/dsh-fleet-mama-017.png`.
+
+### What was committed and pushed, named exactly
+
+- This task worktree: branch `fm/dsh-host-fleet-upgrade`, commits `e2ddb8df23` (this report) — local only, never pushed, no PR.
+- Mac deployment checkout `~/projects/tools/deepseek-harness`: branch `fix/launcher-readiness-on-tree-death` carries `12c2f51c1a` (captain's WIP committed as-is, authorized by him) and `bafd787056` (merge of tag `dsh-v0.1.7-rc.2` **into** the branch; no rebase, no force). **Pushed** to remote `fork`, URL `https://github.com/kesslerio/deepseek-harness.git`, branch `fix/launcher-readiness-on-tree-death` (created there by the first push). That is the only push in this task, and it is the captain-authorized fork commit requested by inbox 002; nothing was pushed to the upstream `deepseek-ai/deepseek-harness`.
+- Host-side state changes (outside git): the two wrapper edits + `.bak-20260926` copies, theshop `30-node-runtime.conf` drop-in, and the user-local node install `~/opt/node-v22.23.1-linux-x64`.
