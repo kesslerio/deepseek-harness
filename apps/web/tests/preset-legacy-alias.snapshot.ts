@@ -14,10 +14,10 @@ import { launchWebScaffold, webSnapshotMode } from './scaffold.ts'
 const fixturePath = fileURLToPath(new URL('../../../snapshots/web/preset-legacy-alias/session.v4.jsonl', import.meta.url))
 
 describe.skipIf(webSnapshotMode() === 'record')('legacy preset restoration through the Web Host', () => {
-  it('resumes the reported Session with its current aliased preset', async () => {
+  it('resumes a stored legacy preset Session with its current aliased preset', async () => {
     const scaffold = await launchWebScaffold()
     try {
-      const id = SessionId('6234b9ef-da38-4a85-a3ca-73175108a642')
+      const id = SessionId('00000000-0000-4000-8000-000000000001')
       const [fixtureHeader] = (await readFile(fixturePath, 'utf8')).trimEnd().split('\n')
         .map((line): Record<string, unknown> => JSON.parse(line) as Record<string, unknown>)
       if (fixtureHeader === undefined) throw new Error('legacy preset fixture has no Session header')
