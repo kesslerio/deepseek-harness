@@ -1,0 +1,37 @@
+/** Restores a stored legacy preset identity through the shipped Web Host composition. */
+
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { zstdCompressSync } from 'node:zlib'
+import { describe, expect, it } from 'vitest'
+import { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
+import { generationLogPath } from '../../../packages/session/session-persistence-jsonl/src/format.ts'
+import type {} from '@deepseek-ai/dsh-agent-preset-registry'
+import type {} from '@deepseek-ai/dsh-api-session-controller'
+import { launchWebScaffold, webSnapshotMode } from './scaffold.ts'
+
+const fixturePath = fileURLToPath(new URL('../../../snapshots/web/preset-legacy-alias/session.v4.jsonl', import.meta.url))
+
+describe.skipIf(webSnapshotMode() === 'record')('legacy preset restoration through the Web Host', () => {
+  it('resumes the reported Session with its current aliased preset', async () => {
+    const scaffold = await launchWebScaffold()
+    try {
+      const id = SessionId('6234b9ef-da38-4a85-a3ca-73175108a642')
+      const [fixtureHeader] = (await readFile(fixturePath, 'utf8')).trimEnd().split('\n')
+        .map((line): Record<string, unknown> => JSON.parse(line) as Record<string, unknown>)
+      if (fixtureHeader === undefined) throw new Error('legacy preset fixture has no Session header')
+      const header = { ...fixtureHeader, id, cwd: scaffold.workspaceCwd }
+      const path = generationLogPath(scaffold.persistenceRoot, scaffold.workspaceCwd, id, SESSION_FORMAT_VERSION, 'zstd')
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(path, zstdCompressSync(Buffer.from(JSON.stringify(header) + '\n')))
+
+      const resumed = await scaffold.ctx.sessionController.resolveAgent(id)
+      if ('error' in resumed) throw resumed.error
+      expect(scaffold.ctx.agentPresets.composedPreset(resumed.agent.ctx)).toBe('cordis')
+      expect(resumed.agent.session.header.agentPreset).toBe('cordis-trimmed')
+    } finally {
+      await scaffold.close()
+    }
+  })
+})

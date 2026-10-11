@@ -13,6 +13,8 @@ export interface AgentPreset {
 export interface Config {
   /** Deployment default when the caller omits a preset. */
   default: string
+  /** Stored preset IDs accepted as aliases for current definitions. */
+  legacyAliases: Readonly<Record<string, string>>
   /** User-selected default; edited through Settings. */
   selectedDefault: Volatile<string | undefined>
 }

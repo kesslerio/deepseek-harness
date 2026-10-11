@@ -1,0 +1,9 @@
+version: 1
+scenario: preset-legacy-alias
+profile: web
+composition: web-default
+recording: authored
+sessionFormat:
+  version: 4
+header:
+  class: web-default
