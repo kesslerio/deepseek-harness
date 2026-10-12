@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-11-legacy-agent-preset-resume-aliases.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/bug-fix/2026-10-11-legacy-agent-preset-resume-aliases.md
+/agent-note-legacy-agent-preset-resume-aliases:
+  en: 0c3562b48e6421a5
+  zh: ecef654e6799d35b
+/agent-note-legacy-agent-preset-resume-aliases/problem:
+  en: d811320f9bec5921
+  zh: 42c7c83dc96662ca
+/agent-note-legacy-agent-preset-resume-aliases/decision:
+  en: 8888a7311a9f9687
+  zh: 61bc9a8795124a7a
+/agent-note-legacy-agent-preset-resume-aliases/alternatives-considered:
+  en: 18171b351435756a
+  zh: 1df36ac3b5c66530
+/agent-note-legacy-agent-preset-resume-aliases/consequences:
+  en: 5e6695e2d5b7a8b0
+  zh: 4e34eaca14ddc13a
+/agent-note-legacy-agent-preset-resume-aliases/testing:
+  en: 44b838783e069d1d
+  zh: 19052208223cb0a7

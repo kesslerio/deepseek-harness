@@ -11,7 +11,11 @@ import type { Context } from '@deepseek-ai/cordis'
 
 const contexts: Context[] = []
 afterEach(async () => { for (const ctx of contexts.splice(0)) await ctx.fiber.dispose() })
-async function setup() { const ctx = await harness(); contexts.push(ctx); return ctx }
+async function setup(options: Parameters<typeof harness>[0] = {}) {
+  const ctx = await harness(options)
+  contexts.push(ctx)
+  return ctx
+}
 
 describe('declarative preset revisions', () => {
   it('eagerly scopes tool and prompt registrations and shares one revision across Agents', async () => {
@@ -75,6 +79,39 @@ describe('declarative preset revisions', () => {
     expect(await ctx.agentPresets.mount(scope.ctx)).toEqual({ id: 'standard' })
     const roster = await ctx.agentPresets.remoteExportList()
     expect(roster.presets.find(row => row.id === 'standard')?.isDefault).toBe(true)
+  })
+
+  it('resolves a stored legacy id to its current declaration without listing the alias', async () => {
+    const ctx = await setup({ legacyAliases: { 'cordis-trimmed': 'cordis' } })
+    await declare(ctx, contribution('cordis'))
+
+    await expect(ctx.agentPresets.resolve('cordis-trimmed')).resolves.toEqual({ id: 'cordis' })
+    await expect(ctx.agentPresets.readDocument('cordis-trimmed')).resolves.toMatchObject({ agentPreset: 'cordis' })
+    const scope = createScope(ctx, {})
+    try {
+      await expect(ctx.agentPresets.mount(scope.ctx, 'cordis-trimmed')).resolves.toEqual({ id: 'cordis' })
+      expect(ctx.agentPresets.composedPreset(scope.ctx)).toBe('cordis')
+      expect((await ctx.agentPresets.list()).map(row => row.id)).toEqual(['cordis'])
+    } finally {
+      await scope.dispose()
+    }
+  })
+
+  it('prefers a declared ID over an alias with the same source ID', async () => {
+    const ctx = await setup({ legacyAliases: { 'cordis-trimmed': 'cordis' } })
+    await declare(ctx, contribution('cordis-trimmed'))
+    await declare(ctx, contribution('cordis'))
+
+    await expect(ctx.agentPresets.resolve('cordis-trimmed')).resolves.toEqual({ id: 'cordis-trimmed' })
+  })
+
+  it('does not resolve an alias whose target is absent', async () => {
+    const ctx = await setup({ legacyAliases: { 'cordis-trimmed': 'cordis' } })
+
+    await expect(ctx.agentPresets.resolve('cordis-trimmed'))
+      .rejects.toThrow('Unknown agent preset: cordis-trimmed')
+    await expect(ctx.agentPresets.resolve('unrecognized'))
+      .rejects.toThrow('Unknown agent preset: unrecognized')
   })
 
   it('rejects duplicate IDs without disposing the first definition', async () => {

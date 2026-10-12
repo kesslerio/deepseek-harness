@@ -52,9 +52,11 @@ export class AgentPresetRegistry extends TypertRemoteService {
   static inject = ['loader', 'sessionProjections']
   static Config = z.object({
     default: z.string().required(),
+    legacyAliases: z.dict(z.string().min(1)).default({}),
     selectedDefault: z.string().volatile(),
   })
   private readonly owner: Context
+  private readonly legacyAliases: ReadonlyMap<string, string>
   private readonly definitions = new Map<string, Definition>()
   private readonly generations = new Map<ScopeKey, Generation>()
   private readonly bindings = new WeakMap<ScopeKey, Binding>()
@@ -63,6 +65,7 @@ export class AgentPresetRegistry extends TypertRemoteService {
   constructor(ctx: Context, public config: Config) {
     super(ctx, 'agentPresets')
     this.owner = ctx
+    this.legacyAliases = new Map(Object.entries(config.legacyAliases))
     ctx.sessionProjections.register(agentPresetProjectionDefinition)
     ctx.inject(['settings'], (child) => { child.effect(() => child.settings.configure({ auto: false }, ctx.fiber)) })
     ctx.on('session/event', (session, event) => {
@@ -71,7 +74,16 @@ export class AgentPresetRegistry extends TypertRemoteService {
   }
 
   /** Default preset for a subsequently created session. */
-  get defaultId(): string { return this.config.selectedDefault.get() ?? this.config.default }
+  get defaultId(): string { return this.resolveId(this.config.selectedDefault.get() ?? this.config.default) }
+
+  private resolveId(id: string): string {
+    return this.definitions.has(id) ? id : this.legacyAliases.get(id) ?? id
+  }
+
+  private unknownPreset(id: string): RemoteError {
+    return new RemoteError('agent-preset/not-found', `Unknown agent preset: ${id}`,
+      { agentPreset: id, available: [...this.definitions.keys()] })
+  }
 
   /** Register and eagerly load a definition; activation failure remains visible in the roster.
    * @param definition Parsed configuration supplied by the declaring plugin.
@@ -179,11 +191,11 @@ export class AgentPresetRegistry extends TypertRemoteService {
    */
   async resolve(id?: string): Promise<AgentPreset> {
     const wanted = id ?? this.defaultId
-    const record = this.definitions.get(wanted)
-    if (record === undefined) throw new RemoteError('agent-preset/not-found', `Unknown agent preset: ${wanted}`,
-      { agentPreset: wanted, available: [...this.definitions.keys()] })
+    const resolvedId = this.resolveId(wanted)
+    const record = this.definitions.get(resolvedId)
+    if (record === undefined) throw this.unknownPreset(wanted)
     const broken = await this.diagnostic(record)
-    return { id: wanted, ...(broken === undefined ? {} : { broken }) }
+    return { id: resolvedId, ...(broken === undefined ? {} : { broken }) }
   }
 
   /** Read one declaration's child plugin list as YAML, for viewing only.
@@ -192,10 +204,10 @@ export class AgentPresetRegistry extends TypertRemoteService {
    */
   @Remote('read')
   readDocument(agentPreset: string): Promise<AgentPresetDocument> {
-    const record = this.definitions.get(agentPreset)
+    const resolvedId = this.resolveId(agentPreset)
+    const record = this.definitions.get(resolvedId)
     if (record === undefined) {
-      return Promise.reject(new RemoteError('agent-preset/not-found', `Unknown agent preset: ${agentPreset}`,
-        { agentPreset, available: [...this.definitions.keys()] }))
+      return Promise.reject(this.unknownPreset(agentPreset))
     }
     const { id, name, description, plugins } = record.config
     // The Loader's own dialect, so `!!js` conditions read as declared rather than as expression objects.
@@ -208,15 +220,15 @@ export class AgentPresetRegistry extends TypertRemoteService {
   private async retain(id?: string): Promise<Generation> {
     const wanted = id ?? this.defaultId
     while (true) {
-      const record = this.definitions.get(wanted)
-      if (record === undefined) throw new RemoteError('agent-preset/not-found', `Unknown agent preset: ${wanted}`,
-        { agentPreset: wanted, available: [...this.definitions.keys()] })
+      const resolvedId = this.resolveId(wanted)
+      const record = this.definitions.get(resolvedId)
+      if (record === undefined) throw this.unknownPreset(wanted)
       const broken = await this.diagnostic(record)
-      if (this.definitions.get(wanted) !== record) continue
+      if (this.definitions.get(resolvedId) !== record) continue
       const generation = record.generation
       if (broken !== undefined || generation === undefined) {
         const reason = broken as string
-        throw new RemoteError('agent-preset/invalid', reason, { agentPreset: wanted, reason })
+        throw new RemoteError('agent-preset/invalid', reason, { agentPreset: resolvedId, reason })
       }
       generation.users++
       return generation
