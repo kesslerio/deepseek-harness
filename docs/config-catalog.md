@@ -124,6 +124,8 @@ Requires: `loader` · `sessionProjections`
 export interface Config {
   /** Preset id mounted when a caller names none. Missing at mount time fails loud. */
   default: string
+  /** Legacy preset IDs mapped directly to current IDs; existing presets take precedence. */
+  legacyAliases?: Record<string, string>
   /** Scanned roots in precedence order; an earlier root wins a duplicate id. */
   roots: PresetRoot[]
   /**
@@ -2540,6 +2542,12 @@ Requires: `subagents`
 export interface Config {
   /** Provider name on `ctx.subagents` (default `fork`). */
   providerName: string
+  /**
+   * Optional hard cap on continuable children admitted to one delegating parent
+   * at a time. Omitted (or `0`) means uncapped. Read by the continuation
+   * manager at admission; a non-capped provider behaves exactly as before.
+   */
+  concurrencyLimit?: number
 }
 ```
 
@@ -2556,6 +2564,12 @@ Requires: `subagents`
 export interface Config {
   /** Provider name on `ctx.subagents` (default `spawn`). */
   providerName: string
+  /**
+   * Optional hard cap on continuable children admitted to one delegating parent
+   * at a time. Omitted (or `0`) means uncapped. Read by the continuation
+   * manager at admission; a non-capped provider behaves exactly as before.
+   */
+  concurrencyLimit?: number
 }
 ```
 

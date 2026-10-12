@@ -482,3 +482,5 @@
       name: '@deepseek-ai/dsh-agent-presets'
       config:
         default: standard
+        legacyAliases:
+          cordis-trimmed: cordis

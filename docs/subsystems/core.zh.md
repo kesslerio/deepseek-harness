@@ -542,6 +542,8 @@ async compositionInventory(): Promise<AgentPresetComposition[]>
  * A broken preset resolves — deleting one, reading one, and reporting one
  * all need the row — and the mounting paths refuse it AFTER resolution
  * through {@link resolveMountable}.
+ * An existing ID wins over its configured legacy alias. Aliases resolve
+ * directly to an existing preset and never follow another alias.
  * @param id - the preset id, or `undefined` for {@link defaultId}.
  * @returns the resolved preset.
  * @throws when no configured root supplies that id.

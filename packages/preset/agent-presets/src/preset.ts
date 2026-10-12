@@ -52,6 +52,8 @@ export interface PresetRoot {
 export interface Config {
   /** Preset id mounted when a caller names none. Missing at mount time fails loud. */
   default: string
+  /** Legacy preset IDs mapped directly to current IDs; existing presets take precedence. */
+  legacyAliases?: Record<string, string>
   /** Scanned roots in precedence order; an earlier root wins a duplicate id. */
   roots: PresetRoot[]
   /**
