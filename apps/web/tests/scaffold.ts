@@ -527,6 +527,7 @@ export async function launchWebScaffold(options: LaunchOptions = {}): Promise<We
     {
       id: 'agent-presets',
       config: {
+        ...composedRows.find(row => row.id === 'agent-presets')?.config as Record<string, unknown>,
         default: 'standard',
         includeUserRoot: false,
       },

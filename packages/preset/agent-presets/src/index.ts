@@ -106,6 +106,7 @@ export class AgentPresets extends TypertRemoteService {
   /** Runtime schema for the preset roster. */
   static Config = z.object({
     default: z.string().required(),
+    legacyAliases: z.dict(z.string().min(1)).default({}),
     roots: z.array(z.object({
       path: z.string().required(),
       trust: z.union(['system', 'user'] as const).default('user'),
@@ -358,6 +359,8 @@ export class AgentPresets extends TypertRemoteService {
    * A broken preset resolves — deleting one, reading one, and reporting one
    * all need the row — and the mounting paths refuse it AFTER resolution
    * through {@link resolveMountable}.
+   * An existing ID wins over its configured legacy alias. Aliases resolve
+   * directly to an existing preset and never follow another alias.
    * @param id - the preset id, or `undefined` for {@link defaultId}.
    * @returns the resolved preset.
    * @throws when no configured root supplies that id.
@@ -366,6 +369,7 @@ export class AgentPresets extends TypertRemoteService {
     const wanted = id ?? this.defaultId
     const presets = await this.list()
     const found = presets.find(preset => preset.id === wanted)
+      ?? presets.find(preset => preset.id === this.config.legacyAliases?.[wanted])
     if (found === undefined) {
       const available = presets.map(preset => preset.id)
       throw new RemoteError(

@@ -51,6 +51,7 @@ kind: "package-reference"
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `default` | 必填 | 部署 fallback preset id；模式选择关闭或没有用户默认值覆盖时使用 |
+| `legacyAliases` | `{}` | 从旧 ID 到当前 ID 的直接映射；已有 preset 优先，别名目标必须存在 |
 | `roots` | `[]` | 按优先级排列的扫描目录；每项提供 `path`（开头的 `~` 会展开）与 `trust`（默认为 `user`） |
 | `includeShippedRoot` | `true` | 在全部已配置根目录之前，前置本包随附的 preset 作为 `system` 根目录 |
 | `includeUserRoot` | `true` | 在全部已配置根目录之后追加 `<dshHome>/.agent-presets` 作为 `user` 根目录 |
@@ -58,6 +59,8 @@ kind: "package-reference"
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-agent-presets)是每个受支持字段及其 JSDoc 的穷尽式真源。
 
 随附根目录前置在全部已配置根目录之前，因此即使补丁替换 roster 配置，内置集合仍然可用并赢得重复 id。`includeShippedRoot: false` 会为完全自行提供 preset 的部署移除内置集合。`includeUserRoot: false` 会移除推导出的可写根目录；钉住确切 roster 的测试会同时关闭两个推导根目录。
+
+Web profile 将 `cordis-trimmed` 映射到 `cordis`。恢复会挂载规范 preset，而不改写已保存的会话头。别名不出现在列表中，也不递归解析；未知 ID 仍会失败。
 
 ### 显示选择器并选择默认 preset
 

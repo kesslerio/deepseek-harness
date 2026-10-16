@@ -97,6 +97,53 @@ beforeEach(async () => {
   ctx = await harness()
 })
 
+describe('legacy preset aliases', () => {
+  const contexts: Context[] = []
+  afterEach(async () => {
+    for (const context of contexts.splice(0)) await context.fiber.dispose()
+  })
+
+  async function aliasedRoster(presetIds: string[]): Promise<Context> {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-preset-alias-'))
+    roots.push(root)
+    for (const id of presetIds) {
+      await mkdir(join(root, id))
+      await writeFile(join(root, id, COMPOSITION_FILE), '[]\n')
+    }
+    const context = await harness({
+      default: 'cordis-trimmed', roots: [{ path: root, trust: 'system' }],
+      includeShippedRoot: false, includeUserRoot: false,
+      legacyAliases: { 'cordis-trimmed': 'cordis' },
+    })
+    contexts.push(context)
+    return context
+  }
+
+  it('mounts a legacy ID through its canonical preset without listing the alias', async () => {
+    const scoped = await aliasedRoster(['cordis'])
+    await expect(scoped.agentPresets.resolve('cordis-trimmed')).resolves.toMatchObject({ id: 'cordis' })
+    await expect(scoped.agentPresets.resolve()).resolves.toMatchObject({ id: 'cordis' })
+    await expect(scoped.agentPresets.readDocument('cordis-trimmed')).resolves.toMatchObject({ agentPreset: 'cordis' })
+    const agent = await agentOn(scoped, 'legacy-alias', 'cordis-trimmed')
+    expect(scoped.agentPresets.composedPreset(agent.ctx)).toBe('cordis')
+    expect((await scoped.agentPresets.list()).map(preset => preset.id)).toEqual(['cordis'])
+  })
+
+  it('prefers an existing preset over its configured alias', async () => {
+    const scoped = await aliasedRoster(['cordis', 'cordis-trimmed'])
+    const agent = await agentOn(scoped, 'legacy-definition', 'cordis-trimmed')
+    expect(scoped.agentPresets.composedPreset(agent.ctx)).toBe('cordis-trimmed')
+  })
+
+  it('refuses missing alias targets and unknown preset IDs before publishing an Agent', async () => {
+    const scoped = await aliasedRoster([])
+    for (const id of ['cordis-trimmed', 'unrecognized']) {
+      await expect(agentOn(scoped, id, id)).rejects.toMatchObject({ code: 'agent-preset/not-found' })
+      expect(scoped.agents.get(SessionId(id))).toBeUndefined()
+    }
+  })
+})
+
 describe('composing an agent from a preset', () => {
   it('hands an absolute plugin path to Node as a file URL', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-preset-absolute-plugin-'))
